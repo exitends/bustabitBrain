@@ -1,0 +1,20 @@
+var config = {}; 
+///////////////////// PLACE V1 SCRIPT INSIDE HERE /////////////////////
+
+// RIGHT HERE
+
+///////////////////// PLACE V1 SCRIPT INSIDE HERE /////////////////////
+(e=>{e.placeBet=((a,t,s)=>{e.bet(a,parseFloat(t/100))}),
+e.getMaxBet=(()=>userInfo.balance), e.getBalance=(()=>userInfo.balance),
+e.getCurrentPayout=(()=>"IN_PROGRESS"!=e.gameState?null:100*e.bust),
+e.lastGamePlayed=(()=>"NOT_PLAYED"!==e.lastGamePlay()),e.lastGamePlay=(()=>{
+let a=e.history.first();return a.wager?a.cashedAt?"WON":"LOST":"NOT_PLAYED"
+}),e.getEngine=e.getState,e.stop=stop,e.on("GAME_STARTING",()=>{
+e._events.game_starting&&e.emit("game_starting",{game_id:e.gameId,time_till_start:5e3
+})}),e.getUsername=(()=>userInfo.uname),e.on("GAME_STARTED",()=>{
+e._events.game_started&&e.emit("game_started",e.playing)}),e.on("GAME_ENDED",()=>{
+if(e._events.game_crash){let t=e.history.first(),s=parseInt(t.lastGameTick-t.startTime);
+e.emit("game_crash",{elapsed:s,game_crash:100*t.bust,bonuses:0,hash:t.hash})}
+}),e.on("CASHED_OUT",t=>{e._events.cashed_out&&e.emit("cashed_out",{username:t.uname,
+amount:t.wager,stopped_at:100*t.cashedAt})}),e.on("BET_PLACED",a=>{
+e._events.player_bet&&e.emit("player_bet",{username:a.uname,bet:a.wager})})})(engine);
