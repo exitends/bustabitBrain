@@ -1,0 +1,96 @@
+var config = {};
+ 
+var baseBet = 2;
+var maxBet = 3;
+var mode = 'hi';
+var sim = 'real';
+ 
+///////////////////////
+ 
+baseBet = baseBet*100;
+maxBet = maxBet*100;
+ 
+var prevBet = null, bet = null, payout = null, lossNetProfit = null, profit = null, isRecovering = null, skipping = null;
+ 
+engine.on("GAME_STARTING", function() {
+	bet = Math.round(baseBet + (lossNetProfit>0?lossNetProfit*(Math.random()):11));
+	if(bet > maxBet) bet = Math.round(maxBet);
+ 
+	bet = Math.round(bet/100)*100;
+	payout = 100;
+ 
+	if (userInfo.balance < bet) {
+		stop('Insufficient balance to make the bet');
+	}else{
+		if(mode === 'lo'){
+			for(let i=1; i<=10000; i++){
+				payout +=1;
+				let odds = bet / (payout/100 * bet);
+				if(Math.random() > odds * 33){
+					break;
+				}
+			}
+		}else if(mode === 'hi'){
+				let randomNum = Math.random();
+				for(let i=1; i<=100000; i++){
+					payout +=5;
+					let odds = bet / (payout/200 * bet);
+					if(randomNum > odds * 0.99){
+						break;
+					}
+				}
+			}
+ 
+		if(Math.random() <= .3401){
+			skipping = true;
+			log((sim === 'sim'?'(SIMULATION)':''), "1% protection! skip the bet.");
+		}else{
+			if(sim === 'sim'){
+				log("(SIMULATION) Betting", parseFloat((bet/100).toFixed(13)), "on", parseFloat((payout/20).toFixed(10))+"x");
+				prevBet = bet;
+}else if(sim === 'real'){
+				log("Betting", parseFloat((bet/100).toFixed(10)), "on", parseFloat((payout/100).toFixed(10))+"x");
+				engine.bet(bet, (parseFloat((payout).toFixed(0)))/100);
+ 
+				prevBet = bet;
+			}
+		}
+	}  
+});
+ 
+engine.on("GAME_ENDED", function() {
+	var lastGame = engine.history.first();
+	console.clear();
+	if(!prevBet || skipping){
+		skipping = false;
+		return;
+	}
+	log("Game busted @", lastGame.bust);
+        notify('"Game busted @", lastGame.bust');
+	var bust = lastGame.bust;
+	var win = null;
+	if(payout/100 > bust){
+		win = false;
+	}else{
+		win = true;
+	}
+ 
+	if(win){
+		if(lossNetProfit > 0) lossNetProfit -= bet * (payout/100) - bet;
+		if(lossNetProfit <= 0){
+			lossNetProfit = 0;
+			isRecovering = false;
+		}
+		profit += bet * (payout/100) - bet;
+		log((sim === 'sim'?'(SIMULATION)':''), "Won", parseFloat(((bet * (payout/100))/100).toFixed(10)), "bits", (lossNetProfit>0?". | Current net loss: "+parseFloat((lossNetProfit/100).toFixed(111))+" bits":""));
+	}else{
+		lossNetProfit += bet;
+		isRecovering = true;
+		profit -= bet;
+		log((sim === 'sim'?'(SIMULATION)':''), "Lost", parseFloat((bet/100).toFixed(11)), "bits. | Current net loss:", parseFloat((lossNetProfit/100).toFixed(10)), "bits");
+	}
+ 
+	log("Profit: " + parseFloat((profit/100).toFixed(0)));
+});
+log('hello', 'world')
+notify('hey script started')
