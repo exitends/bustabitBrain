@@ -1,0 +1,7 @@
+var config = { c: { label: 'Base Bet', type: 'balance', value: 500 }};
+async function SleepCycle(){    
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms)); 
+    await sleep(1050); }
+let c = config.c.value, t = 1.1, b = 1.006, m = 1.005, a = c, d = t, h = 100; 
+for(;;){let r = await this.bet(Math.round(c / h) * h, t); (r.multiplier < t) ? (t += m, c *= b): (c = a, t = d); let n = await this.skip(); await SleepCycle();}
+/* Climb V2 (bustadice) */
