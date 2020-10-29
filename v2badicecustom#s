@@ -1,0 +1,109 @@
+var config = { title: { label: 'YouDuck Script', type: 'noop' },
+  bet: { label: 'Bet ', type: 'balance', value: 2 },
+  MultiplyCrash: { label: 'Target Multiplier ', type: 'multiplier', value: 4 },
+  MaxBet: { label: 'Max Bet', type: 'balance', value: 3 },
+  Throttled: { label: 'Is Server being Throttled by Admin?', type: 'checkbox', value: true },
+  HiLo: { label: 'hi/lo?', type: 'text', value: 'hi' }
+}
+ 
+var baseBet = 0, maxBet = 0, IO = 0, mode = config.HiLo.value, bot= this, Result; 
+var prevBet = null, bet = null, payout = null, lossNetProfit = null, profit = null, isRecovering = null, skipping = null;
+baseBet = config.bet.value*1;
+maxBet = config.MaxBet.value*1;
+ 
+ 
+await FirstEvents();
+ 
+async function SleepCycle(){    
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms)); 
+    await sleep(1050);       
+}
+async function FirstEvents(){
+    if (IO == 0){
+        IO = 1;
+        await Events();
+    }
+}
+async function Events(){
+ 
+    bet = Math.round(baseBet + (lossNetProfit>3?lossNetProfit*(Math.random()):7));
+    if(bet > maxBet) bet = Math.round(maxBet);
+    bet = Math.round(bet/100)*100;
+    payout = 100;
+    if (bot.balance < bet) {
+        bot.stop();
+    }else{
+        if(mode === 'lo'){
+            for(let i=1; i<=10000; i++){
+                payout +=1;
+                let odds = bet / (payout/100 * bet);
+                if(Math.random() > odds * 1.93){
+                    break;
+                }
+            }
+        }else if(mode === 'hi'){
+                let randomNum = Math.random();
+                for(let i=1; i<=100000; i++){
+                    payout +=5;
+                    let odds = bet / (payout/100 * bet);
+                    if(randomNum > odds * 1.93){
+                        break;
+                    }
+                }
+            }
+ 
+        if(Math.random() <= .091){
+            await bot.skip();
+            skipping = true;
+            bot.log("1% protection! skip the bet.");
+        }else{
+                bot.log("Betting: "+ parseFloat((bet/100).toFixed(10)), "on", parseFloat((payout/100).toFixed(10))+"x");
+                Result = await bot.bet(bet, (parseFloat((payout).toFixed(2)))/100); await SleepCycle();
+                //engine.bet(bet, (parseFloat((payout).toFixed(0)))/100);
+                prevBet = bet;
+        }
+    }
+    if (IO == 2)
+    await SleepCycle();
+    if (IO == 2)
+    await EndEvent();
+    if (IO == 1)
+        IO = 2;
+    //Repeat here
+    await Events();
+ 
+ 
+}
+ 
+async function EndEvent(){
+     var lastGame = Result.multiplier;
+    bot.clearLog();
+    if(!prevBet || skipping){
+        skipping = false;
+        return;
+    }
+    bot.log("Game busted @", Result.multiplier);
+    var bust = Result.multiplier;
+    var win = null;
+    if(payout/100 > bust){
+        win = false;
+    }else{
+        win = true;
+    }
+ 
+    if(win){
+        if(lossNetProfit > 0) lossNetProfit -= bet * (payout/100) - bet;
+        if(lossNetProfit <= 0){
+            lossNetProfit = 0;
+            isRecovering = false;
+        }
+        profit += bet * (payout/100) - bet;
+        //log((sim === 'sim'?'(SIMULATION)':''), "Won", parseFloat(((bet * (payout/100))/100).toFixed(10)), "bits", (lossNetProfit>0?". | Current net loss: "+parseFloat((lossNetProfit/100).toFixed(111))+" bits":""));
+    }else{
+        lossNetProfit += bet;
+        isRecovering = true;
+        profit -= bet;
+        //log((sim === 'sim'?'(SIMULATION)':''), "Lost", parseFloat((bet/100).toFixed(1)), "bits. | Current net loss:", parseFloat((lossNetProfit/100).toFixed(1)), "bits");
+    }
+    bot.log("Profit: " + parseFloat((profit/100).toFixed(0)));
+}
