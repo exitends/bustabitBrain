@@ -1,0 +1,712 @@
+this.log(`Ascent Script 1.06v by baecoin`)
+
+const strategy = 7  /* Preset game rules and settings. 1 to turn off; setting it more than 1 will overrides base settings */
+/*
+...2 - Normal Mode for normal balance [>8000 bits]
+...3 - Normal Mode for high balance [>16300 bits]
+...4 - Alternative mode for multiplier 3, just for having more than common run
+...5 - Early profit and later normal run for balance [>4500 bits]
+...6 - High profit for medium numbers, for balance [>5000 bits] medium risk
+...7 - 2x Mode, for low balance run [<2000 bits] low risk
+...8 - 2x Mode, for medium balance run [<4000 bits], average risk
+...9 - Soft strategy run, not long term, something like medium term. For balance [>2000 bits] low risk
+*/
+const engine = this
+
+var settings = {                                  /*  Settings */
+    common: {                                    /*  Common */
+        baseBet: 1,                              /* Bet in bits */
+        baseTarget: 5,                            /* Leading target in game */
+        safety_bits: 23,                          /* Streak to Wait, STW; placing bits to safe from busts, longest streak known 60. 60 - 38 = 22 rolls to be safe */
+        safety_bits_bet: 1,                      /* STW amount of bet */
+        safety_bits_target: 1.01,                /* STW target to catch */
+        safety_bits_incremental: false,          /* Is STW dynamic by wins increase it */
+        safety_bits_decremental_on_seed_every: 0, /* Decrease STW on every X seed times change, set 0 to disable  */
+    },
+    conditions: {                                /*  Conditions */
+        stopLoss: 0,                              /* Amount bits you set in this parameter will mean script will stop after drop below this value */
+        stopProfit: 100000,                      /* Amount bits you set will be targeted by script to win, after reach this value scripts stop */
+    },
+    seed: {                                      /*  Seed Management */
+        changeSeed: 150,
+        changeSeedAtResetBet: false,              // TODO
+        smart_seed_change: false,                /* At win drop seed counter */
+        change_seed_on_target_reset: false,      /* Target will be changed on trigger target reset at */
+        predict_avoid_streaks: false,            // TODO
+        reset_seed_after_first_bet_reset: false,
+    },
+    periods: {                                    /*  Periods - Not Ascent Script part (Don't use it, still to do)*/
+        Periods_enabled: false,                  // TODO
+        PeriodBet: 1,
+        PeriodTarget: 1.01,
+        basePrewait: 40,                          /* Periods rolls before attempts to start */
+        baseAfterwait: 40,                        /* How much rolls will play without green, before going to prewait */
+        baseAfterStartPlay: 2,                    /* How much baseTarget win need to be triggered times by period in prewait */
+    },
+    modifications: {                              /*  Modifications - all default settings is set to normal Ascent settings to run */
+        targetAddition: 0.0,                      /* Add in every roll amount of target after lose wager */
+        betAddition: 2,                          /* Add in every roll amount of bet after lose wager */
+        increaseBetEvery: 2,                      /* How often bet is going to increase on value setted in betAddition */
+        increaseBetEvery_after_bet: 64,
+        increaseBetEvery_after: 2,
+        resetTargetAt: 40,                        /* Trigger target to set, after hit a limit in bet size */
+        resetTargetTo: 7,                        /* Target to set, after hit a limit in target size */
+        resetBetAt: 4096,                        /* Trigger reset bet at value when it caught */
+        resetBetTo: 100,                          /* Bet to set, after hit a limit in bet size */
+        maximum_after_resetBet: 4096,
+    },
+    options: {                                    /*  Options */
+        sleepTimeInMS: 250,                      /* Pause between actual rolls */
+        increaseBetOnWin: false,
+        multiplyBetInsteadAdd: true,              /* Instead of just add betAddition, do multiply it if value is set to true */
+        switch_strategy_after: 0,                /* TODO */
+        enable_game_sounds: true,                /* Is sound of peak are enabled or disabled */
+        log_information: true,                    /* Never clear logs while script run */
+        debug: true,
+        use_skips: true,                          /* Use skips to reduce loss on 1.0x bets */
+    },
+    strategy_low: {                                // TODO, not finished yet - Not Ascent Script part
+        strategy_low_enabled: false,
+        LimitTarget: 256,                        /* If bet reach value or higher, bet will be reset at win to base bet */
+        enable_super_profit: false,              /* Only if you handle for balance more than 10000 bits. */
+        baseBet: 1,
+        baseTarget: 1.5,
+    },
+    accumulative_strategy: {
+        accumulative_strategy_enabled: false,    /* Experimental - Not Ascent Script part. Still TODO */
+    }
+}
+if (strategy != 0) {
+    await load_presets_settings(strategy)
+}
+
+/* Common Script part setup */
+var target = settings.common.baseTarget
+var bet = settings.common.baseBet
+let skip = 0
+
+var rolls = 0
+let countsbase = 0
+let beforechange = 0
+let after_seed = settings.common.safety_bits_decremental_on_seed_every
+
+/* AntiScript periods part setup */
+var formedBet
+var formedTarget
+let afterwait = 0
+let gameStarted = false
+let prewait = settings.periods.basePrewait
+let AfterStartPlay = settings.periods.baseAfterStartPlay
+
+/* Strategy Low numbers part setup */
+var multiplier
+let playing = false
+let count = 0
+let lossCount = 0
+let lose_rolls = 0
+let negative_profit_run = 0
+let switcher_strategy = 0
+let safety_bit_count = 0
+var bets = settings.strategy_low.baseBet
+var targets = settings.strategy_low.baseTarget
+let strategy_low_play = settings.strategy_low.strategy_low_enabled
+let stop_streaks = settings.common.safety_bits
+let temp_reset_At = settings.modifications.resetBetAt
+let temp_addition = settings.modifications.increaseBetEvery
+
+/* TWO LOOPS IN GAME */
+while (true) {
+    /* Sub-loop - Streak to Wait */
+    while (safety_bit_count < settings.common.safety_bits) {
+        rolls++
+        playing = true
+        if (settings.options.log_information != true) { engine.clearLog() }
+
+        const { multiplier } = await analyzeBet()
+
+        if (multiplier < settings.common.baseTarget) {
+            safety_bit_count++
+            stop_streaks--
+            engine.log(`${safety_bit_count}th safety bet placed, STW(${settings.common.safety_bits}), Seed Roll: ${rolls}/${settings.seed.changeSeed}`)
+            await queuedSeedChange()
+        } else {
+            safety_bit_count = 0
+            engine.log(`......Sub-loop finished `)
+            playing = false
+
+        }
+        if (settings.seed.predict_avoid_streaks == true && stop_streaks == 0) {
+            engine.log(`Guessing bad streak! Resetting seed`)
+            await generateSeed()
+            stop_streaks = 0
+        }
+    }
+
+    await check_conditions()
+    gong()
+    if (settings.accumulative_strategy.accumulative_strategy_enabled == true) {
+        await start_accumulative_strategy(1)
+    } else {
+        if (strategy_low_play == false) {
+            // period_addon_formators()
+            if (bet > settings.modifications.resetBetAt) {
+                bet = settings.modifications.resetBetTo
+                settings.modifications.resetBetAt = settings.modifications.maximum_after_resetBet
+                if (settings.seed.reset_seed_after_first_bet_reset == true) {
+                    do_force_change_seed()
+                }
+            }
+            rolls++
+            playing = true
+
+            const { multiplier } = await engine.bet(bet * 100, target)
+            // period_addon()
+            if (multiplier < target) { /* LOSS */
+                we_lose()
+            } else {                  /* WINS */
+                safety_bit_count = 0
+                settings.modifications.resetBetAt = temp_reset_At
+                if (settings.common.safety_bits_incremental == true) {
+                    settings.common.safety_bits++
+                    if (settings.options.debug == true) {
+                        engine.clearLog()
+                    }
+                    engine.log(`STW: ${settings.common.safety_bits}`)
+                }
+                playing = false
+                // await queuedSeedChange()
+                await resetBetAndSeed()
+                we_won()
+            }
+            if (multiplier < targets) {
+                switcher_strategy++
+                if (switcher_strategy >= settings.options.switch_strategy_after && settings.options.switch_strategy_after != 0) {
+                    switcher_strategy = 0
+                    strategy_low_play = true
+                    targets = settings.strategy_low.baseTarget
+                    bets = settings.strategy_low.baseBet * 100
+                    engine.log(`Starting test 1.5x strategy!`)
+                } else {
+                    //engine.log(`${switcher_strategy} of ${settings.options.switch_strategy_after} to switch on other script`)
+                }
+            } else {
+                switcher_strategy = 0
+            }
+        } else {
+            await start_strategy_low()
+        }
+    }
+}
+async function start_accumulative_strategy(bet_amount) {
+    let a_bet = bet_amount
+    let a_count = 0
+
+    while (true) {
+        await sleep(settings.options.sleepTimeInMS)
+        const { multiplier } = await engine.bet(a_bet * 100, target)
+        if (multiplier < target) { //LOSS
+            a_count = a_count - a_bet
+        } else { //WINS
+            a_count = a_count + (a_bet * target)
+        }
+        if (a_count <= 0) {
+            a_count = 0
+            a_bet = bet_amount
+        }
+        if (a_count % a_bet == 0) {
+            a_bet = a_bet * 2
+        }
+    }
+}
+async function start_strategy_low() {
+    if (bets / 100 >= settings.strategy_low.LimitTarget) {  // TODO REMOVE TO OTHER CLASS
+        bets = settings.strategy_low.LimitTarget * 100    //
+    }
+    rolls++                                                      // TODO MAKE CALLBACK FOR ALL BETS
+    playing = true                                              // 
+    const { multiplier } = await engine.bet(bets, targets)      //
+    if (multiplier < targets) { /* Lose */
+
+        if (bets / 100 >= settings.strategy_low.LimitTarget) {
+            strategy_low_play = false
+            switcher_strategy = 0
+            bet = settings.common.baseBet
+            target = settings.common.baseTarget
+            engine.log(`Starting main script!`)
+        }
+        try {
+            we_lost_strategy_low()
+        } catch (error) {
+            engine.log(`Ops`)
+        }
+
+    } else {                  /* Win */
+        we_won_strategy_low()
+        await resetBetAndSeed()
+    }
+}
+function we_won_strategy_low() {
+    playing = false
+    lossCount = 0
+    if (bets / 100 >= settings.strategy_low.LimitTarget) {
+        engine.log("Limit reached, resetting")
+        bets = 100
+        count = 0
+    }
+    if (count > 4) { // 15
+        bets = 100 * 4
+    } else {
+        bets = 100 * 2
+    }
+    if (count > 16) { // 20
+        bets = 100 * 8
+    }
+    if (count > 32) { // 50
+        bets = 100 * 16
+    }
+    if (count > 64) { // 75
+        bets = 100 * 32
+    }
+    if (count > 128) { // 480
+        bets = 100 * 64
+    }
+    if (count > 256) { // 920
+        bets = 100 * 128
+    }
+    if (count > 512) { // 2000
+        bets = 100 * 256
+    }
+    if (count > 1024) { // 4000
+        bets = 100 * 512
+    }
+    if (settings.strategy_low.enable_super_profit == true) {
+        if (count > 2048) {
+            bets = 100 * 1024
+        }
+        if (count > 4096) {
+            bets = 100 * 2048
+        }
+    }
+    if (bets / 100 >= 1) {
+        count = count + (bets / 100 * 2)
+    }
+    if (bets / 100 > 2) {
+        count = count + (bets / 100 * 2)
+    }
+    if (bets / 100 > 4) {
+        count = count + (bets / 100 * 2)
+    }
+    if (bets / 100 > 8) {
+        count = count + (bets / 100 * lossCount)
+    }
+    if (bets / 100 > 16) {
+        count = count + (bets / 100 * lossCount)
+    }
+    if (bets / 100 > 32) {
+        count = count + (bets / 100 * lossCount)
+    }
+    if (bets / 100 > 64) {
+        count = count + (bets / 100 * lossCount)
+    }
+    if (bets / 100 > 128) {
+        count = count + (bets / 100 * lossCount)
+    }
+    if (bets / 100 > 256) {
+        count = count + (bets / 100 * lossCount)
+    }
+    if (bets / 100 > 512) {
+        count = count + (bets / 100 * lossCount)
+    }
+    if (settings.strategy_low.enable_super_profit == true) {
+        if (bets / 100 > 1024) {
+            count = count + (bets / 100 * 1)
+        }
+        if (bets / 100 > 2048) {
+            count = count + (bets / 100 * 1)
+        }
+    }
+    engine.log(`Won, counter ${count}`)
+}
+function we_lost_strategy_low() {
+    lossCount++
+    if (bets / 100 >= 2) {
+        count = count - (bets / 100 * lossCount)
+    } else {
+        count = count - (bets / 100)
+    }
+    if (bets / 100 >= 4) {
+        count = count - (bets / 100)
+    }
+    if (bets / 100 >= 8) {
+        count = count - (bets / 100) - (20)
+    }
+    if (bets / 100 >= 16) {
+        count = count - (bets / 100) - (50)
+    }
+    if (bets / 100 >= 32) {
+        count = count - (bets / 100 * lossCount) //75
+    }
+    if (bets / 100 >= 64) {
+        count = count - (bets / 100 * lossCount) //480
+    }
+    if (bets / 100 >= 128) {
+        count = count - (bets / 100 * lossCount) //920
+    }
+    if (bets / 100 >= 256) {
+        count = count - (bets / 100 * lossCount) //2000
+    }
+    if (bets / 100 >= 512) {
+        count = count - (bets / 100 * lossCount) //4000
+    }
+    if (settings.enable_super_profit == true) {
+        if (bets / 100 >= 1024) {
+            count = count - (bets / 100) - (8000 * lossCount)
+        }
+        if (bets / 100 >= 2048) {
+            count = count - (bets / 100) - (16000 * lossCount)
+        }
+    }
+    if (count <= 0) {
+        count = 0
+        bets = 100
+        lossCount = 0
+    }
+    engine.log(`Lost, counter ${count}`)
+}
+function we_lose() {
+    let local_IncreaseBetEvery = settings.modifications.increaseBetEvery
+
+    lose_rolls++
+    negative_profit_run = negative_profit_run + bet
+    target = target + settings.modifications.targetAddition
+    if (bet > settings.modifications.increaseBetEvery_after_bet) {
+        local_IncreaseBetEvery = settings.modifications.increaseBetEvery_after
+    }
+    if (countsbase >= local_IncreaseBetEvery) {
+        if (settings.options.multiplyBetInsteadAdd == true) {
+            bet = bet * settings.modifications.betAddition
+        } else {
+            bet = bet + settings.modifications.betAddition
+        }
+
+        countsbase = 0
+    }
+    if (settings.options.increaseBetOnWin == true) { // Experimental feature, on every winning increase bet
+        if (beforechange <= 0) {
+            beforechange = 0
+            bet = settings.common.baseBet
+        } else {
+            beforechange = beforechange - 1
+        }
+    }
+    if (settings.options.log_information != true) { engine.clearLog() }
+    engine.log(`Lose ${settings.common.safety_bits + lose_rolls}th bet in amount of ${bet}, total cost from first lose ${negative_profit_run} bits `)
+}
+function we_won() {
+    countsbase = 0
+    lose_rolls = 0
+    if (settings.options.log_information != true) { engine.clearLog() }
+    engine.log(`Success. Total Profit from last run is ${Math.round(bet * target) - negative_profit_run}`)
+    negative_profit_run = 0
+
+    if (settings.options.increaseBetOnWin == true) { // Experimental feature, on every winning increase bet
+        bet = bet + settings.modifications.betAddition
+        beforechange = bet
+    } else {
+        bet = settings.common.baseBet
+    }
+    if (settings.seed.smart_seed_change == true) { // Reset seed counter at catch and win
+        rolls = 0
+    }
+    target = settings.common.baseTarget
+
+    afterwait = 0
+    AfterStartPlay--
+}
+async function check_conditions() {
+    if (settings.conditions.stopLoss >= engine.balance / 100) {
+        engine.log(`Lose Stopper was triggered by ${settings.conditions.stopLoss} value! Script is shutdown now.`)
+        await engine.stop()
+    }
+    if (settings.conditions.stopProfit <= engine.balance / 100) {
+        engine.log(`Profit Stopper was triggered by ${settings.conditions.stopProfit} value! Script is shutdown now.`)
+        await engine.stop()
+    }
+    if (settings.options.sleepTimeInMS != 0) {
+        await sleep(settings.options.sleepTimeInMS)
+    }
+    if (target >= settings.modifications.resetTargetAt) {
+        target = settings.modifications.resetTargetTo
+        if (settings.seed.change_seed_on_target_reset == true) {
+            await generateSeed()
+        }
+
+    }
+    //await resetBetAndSeed()
+    countsbase++
+}
+/**
+ * Checks if bet is reached its limit, then bet will be set
+ * to his limit specified in settings, and then with that 
+ * seed will be generated also.
+ */
+async function resetBetAndSeed() {
+    if (settings.seed.changeSeedAtResetBet == true) {
+        if (bet > settings.modifications.resetBetAt) {
+            bet = settings.modifications.resetBetTo
+            await generateSeed()
+        }
+    }
+}
+function period_addon_formators() {
+    if (gameStarted == true) { afterwait++ } else { prewait-- }
+    if (gameStarted == true) {
+        formedTarget = target
+    } else {
+        formedTarget = settings.periods.PeriodTarget
+    }
+    if (prewait <= 0) { resetPrewait() }
+
+    if (AfterStartPlay <= 0) { gamePeriod(true) }
+    if (afterwait >= settings.periods.baseAfterwait) { gamePeriod(false) }
+
+    if (formedTarget == null) { formedTarget = settings.periods.PeriodTarget }
+    if (gameStarted == true) {
+        formedBet = bet
+    } else {
+        formedBet = settings.periods.PeriodBet
+    }
+}
+function period_addon() {
+    if (settings.options.log_information != true) { engine.clearLog() }
+
+    engine.log(`Starting in: ${AfterStartPlay}, Prewait: ${prewait}, Afterwait: ${afterwait}(${settings.periods.baseAfterwait})`)
+    if (multiplier > settings.common.baseTarget) {
+        formedTarget = settings.periods.PeriodTarget
+        if (gameStarted == true) {
+            formedTarget = settings.common.baseTarget
+        }
+    }
+}
+function gamePeriod(state) {
+    gameStarted = state
+    prewait = settings.periods.basePrewait
+    afterwait = 0
+    if (AfterStartPlay - 1 <= 1) {
+        AfterStartPlay = 1
+    } else {
+        AfterStartPlay = settings.periods.baseAfterStartPlay - 1
+    }
+}
+function resetPrewait() {
+    prewait = settings.periods.basePrewait
+    AfterStartPlay = settings.periods.baseAfterStartPlay - 1
+}
+async function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
+/**
+ * Places bet with specified satoshi and get promises on async function,
+ * Fill value with bet object and parameters
+ * @param {number} wager Amount of satoshi to place for bet
+ */
+async function doBet(wager) { return new Promise(resolve => engine.bet(wager, target)) } // UNTESTED
+
+async function queuedSeedChange() {
+    //engine.log(`Seed Task, Roll: ${rolls}(${settings.seed.changeSeed})`)
+    if (rolls >= settings.seed.changeSeed) {
+        await generateSeed()
+        safety_bit_count = 0
+        //if (settings.options.debug == true){
+        //    //engine.log("Queued seed change completed task.")
+        //}
+    }
+}
+/**
+ * Decreases streak to wait value.
+ */
+function decrement_streak_to_wait() {
+    if (settings.common.safety_bits_decremental_on_seed_every > 0) {
+        if (after_seed > 0) {
+            after_seed--
+        } else {
+            settings.common.safety_bits--
+            after_seed = settings.common.safety_bits_decremental_on_seed_every
+        }
+    }
+}
+function increment_streak_to_wait() {
+    // TODO
+}
+async function analyzeBet() {
+    if (settings.options.use_skips = true && skip == 1) {
+        skip = 0
+        return await engine.skip(settings.common.safety_bits_bet * 100, settings.common.safety_bits_target)
+    } else {
+        skip = 1
+        settings.options.use_skips = false
+        return await engine.bet(settings.common.safety_bits_bet * 100, settings.common.safety_bits_target)
+    }
+}
+/**
+ * Generating new seed pair for client and hash server.
+ */
+async function generateSeed() {
+    try {
+        const { server_seed_hash } = await engine.newSeedPair()
+        engine.log(`Server hash: ${server_seed_hash}`)
+    }
+    catch (e) {
+        engine.log(`Seed is already was reset`)
+    }
+    try {
+        const clientSeed = randomSeed()
+        await engine.setClientSeed(clientSeed)
+        engine.log(`Seed was set to: ${clientSeed}`)
+        decrement_streak_to_wait()
+    }
+    catch (e) {
+        engine.log(`Client seed already is used`)
+    }
+    rolls = 0
+}
+/**
+ * Returns a random word for seed generation.
+ */
+function randomSeed() {
+    const words = [ 'aAld5hegra ', 'aBravhd5n ', 'aCh5arhdlik ', 'aDel5hadgo ', 'aZech5hso ', 'aFordehxt5romb ', 'aHoth5elshsa ', 'aGndhomu5s ', 'aAddd5ihc6ted ', 'aAu5dh6relia ', 'aZi56dgalo ', 'aWiverm66dda ',
+        'aMarid5dnher ', 'aOctoberdd5hfest ', 'aNd5ashcar ', 'aPdd5ahpaja ', 'aAlbeh55dds ', 'aGohdm5us ', 'aFihedrra ', 'aGT5hddO ', 'aUn5dhicorn ', 'aVicdnht5us ', 'aShi65dski ', 'aXda6v5ier ', 'aPoid66uplddet ', 'aAdntu66tdssulika ' ]
+
+    return words[ Math.floor(words.length * Math.random()) ] + words[ Math.floor(words.length * Math.random()) ] + words[ Math.floor(words.length * Math.random()) ]
+}
+/**
+ * Play sound peak.
+ */
+async function gong() {
+    const audio = new Audio("https://bustadice.com/5bb187b7ef764e76fb519939f77288c1.mp3")
+    if (settings.options.enable_game_sounds != false) { await audio.play() }
+    return new Promise(resolve => audio.onended = resolve)
+}
+/**
+ * Force seed change by generating new one.
+ */
+async function do_force_change_seed() {
+    await generateSeed()
+}
+/**
+ * Number of preset settings to load into script.
+ * @param {number} strategy 
+ */
+async function load_presets_settings(strategy) {        /* Templates/Patterns Setting for various run */
+    let strategy_choose = strategy
+    switch (strategy_choose) {
+        case 2: /* Normal Mode for normal balance [>8000 bits] */
+            settings.modifications.betAddition = 2 /* Multiplier on lost bet size */
+            settings.modifications.increaseBetEvery = 2 /* How much time repeat same amount bet before increase it */
+            settings.modifications.increaseBetEvery_after_bet = 64 /* After reach this size, which was met reset bet, use new rules on repeating bets */
+            settings.modifications.increaseBetEvery_after = 2 /* After reset bet, how much repeat bet will happen */
+            settings.modifications.resetBetAt = 2048 /* Maximum bet size(wager) can be placed, after it game will reset to variable you set below */
+            settings.modifications.resetBetTo = 32  /* Bet size to start count up after resetbetAT was reached */
+            settings.modifications.maximum_after_resetBet = 2048  /* After resetting bet use new or keep same betting amount size rules */
+            settings.common.safety_bits_decremental_on_seed_every = 0 /* Decrease STW(safety bits) by one after amount of seeds was reset, 0 to disable it */
+            settings.common.safety_bits_incremental = false /* Increases after success run STW by one, default is set to false, for users who know what they doing */
+            engine.log(`Strategy Normal mode is selected. [>8000 bits]`)
+            break;
+        case 3:  /* Normal Mode for high balance [>16300 bits] */
+            settings.modifications.betAddition = 2 /* Multiplier on lost bet size */
+            settings.modifications.increaseBetEvery = 2 /* How much time repeat same amount bet before increase it */
+            settings.modifications.increaseBetEvery_after_bet = 64 /* After reach this size, which was met reset bet, use new rules on repeating bets */
+            settings.modifications.increaseBetEvery_after = 2 /* After reset bet, how much repeat bet will happen */
+            settings.modifications.resetBetAt = 4096 /* Maximum bet size(wager) can be placed, after it game will reset to variable you set below */
+            settings.modifications.resetBetTo = 100  /* Bet size to start count up after resetbetAT was reached */
+            settings.modifications.maximum_after_resetBet = 4096  /* After resetting bet use new or keep same betting amount size rules */
+            settings.common.safety_bits_decremental_on_seed_every = 0 /* Decrease STW(safety bits) by one after amount of seeds was reset, 0 to disable it */
+            settings.common.safety_bits_incremental = false /* Increases after success run STW by one, default is set to false, for users who know what they doing */
+            engine.log(`Strategy Normal mode for high balance was selected [>16300 bits]`)
+            break;
+        case 4:  /* Alternative mode for multiplier 3, just for having more than common run */
+            settings.modifications.betAddition = 3
+            settings.modifications.increaseBetEvery = 3
+            settings.modifications.increaseBetEvery_after_bet = 243
+            settings.modifications.increaseBetEvery_after = 2
+            settings.modifications.resetBetAt = 2187
+            settings.modifications.resetBetTo = 512
+            settings.modifications.maximum_after_resetBet = 4608
+            engine.log(`Strategy 3x multiplier mode was selected`)
+            break;
+        case 5: /* Early profit and later normal run for balance [>4500 bits] */
+            await do_force_change_seed()
+            settings.seed.changeSeed = 20
+            settings.modifications.betAddition = 2
+            settings.modifications.increaseBetEvery = 2
+            settings.modifications.increaseBetEvery_after_bet = 64
+            settings.modifications.increaseBetEvery_after = 2
+            settings.modifications.resetBetAt = 160
+            settings.modifications.resetBetTo = 1
+            settings.modifications.maximum_after_resetBet = 160
+            settings.common.baseBet = 10
+            settings.common.safety_bits = 2
+            settings.common.safety_bits_incremental = false
+            settings.common.safety_bits_decremental_on_seed_every = 0
+            engine.log(`Strategy Early profit and later normal run for balance [>4500 bits] was selected`)
+            break;
+        case 6: /* High profit for medium numbers, for balance [>5000 bits] medium risk */
+            await do_force_change_seed()
+            settings.seed.changeSeed = 20
+            settings.modifications.betAddition = 2
+            settings.modifications.increaseBetEvery = 2
+            settings.modifications.increaseBetEvery_after_bet = 64
+            settings.modifications.increaseBetEvery_after = 2
+            settings.modifications.resetBetAt = 80
+            settings.modifications.resetBetTo = 20
+            settings.modifications.maximum_after_resetBet = 160
+            settings.common.baseBet = 2
+            settings.common.baseTarget = 5
+            settings.common.safety_bits = 19
+            settings.common.safety_bits_incremental = true
+            settings.common.safety_bits_decremental_on_seed_every = 3
+            engine.log(`Strategy High profit for medium numbers, for balance [>5000 bits] medium risk was selected`)
+            break;
+        case 7: /* 2x Mode, for low balance run [<2000 bits], low risk */
+            await do_force_change_seed()
+            settings.seed.changeSeed = 20
+            settings.modifications.betAddition = 2
+            settings.modifications.increaseBetEvery = 2
+            settings.modifications.resetBetAt = 128
+            settings.modifications.resetBetTo = 32
+            settings.modifications.maximum_after_resetBet = 128
+            settings.common.baseBet = 2
+            settings.common.baseTarget = 5
+            settings.common.safety_bits = 8
+            settings.common.safety_bits_incremental = true
+            settings.common.safety_bits_decremental_on_seed_every = 3
+            engine.log(`Strategy 2x Mode, for low balance run [<2000 bits] low risk`)
+            break;
+        case 8:  /* 2x Mode, for medium balance run [<4000 bits], average risk */
+            await do_force_change_seed()
+            settings.seed.changeSeed = 20
+            settings.modifications.betAddition = 2
+            settings.modifications.resetBetAt = 128
+            settings.modifications.resetBetTo = 1
+            settings.modifications.maximum_after_resetBet = 128
+            settings.common.baseBet = 1
+            settings.common.safety_bits = 2
+            settings.common.safety_bits_incremental = false
+            settings.common.safety_bits_decremental_on_seed_every = 0
+            engine.log(`Strategy 2x Mode, for medium balance run [<4000 bits], average risk is selected`)
+            break;
+        case 9: /* Soft strategy run, not long term, something like medium term. For balance [>2000 bits] low risk */
+            await do_force_change_seed()
+            settings.seed.changeSeed = 20
+            settings.modifications.betAddition = 2
+            settings.modifications.resetBetAt = 160
+            settings.modifications.resetBetTo = 1
+            settings.modifications.maximum_after_resetBet = 128
+            settings.common.baseBet = 5
+            settings.common.safety_bits = 10
+            settings.common.safety_bits_incremental = false
+            settings.common.safety_bits_decremental_on_seed_every = 0
+            engine.log(`Strategy Soft strategy run, not long term, something like medium term. For balance [>2000 bits] low risk is selected`)
+            break;
+        default:
+            engine.log(`Strategy is not set, using settings from settings object.`)
+    }
+}
