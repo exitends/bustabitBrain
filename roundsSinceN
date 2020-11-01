@@ -1,0 +1,82 @@
+var config = {
+    n: { value: '1', type: 'text', label: 'Rounds since last game >= multiplier (n)'},
+    t: { value: 2, type: 'multiplier', label: 'Multiplier (t)'},
+    wager: { value: 0, type: 'balance', label: 'Wager'}
+};
+ 
+// Globals
+const n = parseInt(config.n.value);
+const t = config.t.value;
+const wager = config.wager.value;
+let m = 0;
+ 
+// Ensure user input makes sense
+if(isNaN(n)) {
+    stop('n must be an integer');
+} else if(n < 0) {
+    stop('n cannot be less than 0');
+} else if(n === 0) {
+    log('Warning: n is 0, the script will be betting on every game');
+} else if(t > 1000) {
+    log('Warning: You are using a very high multiplier');
+    log('Using large values can cause the script to freeze temporarily');
+}
+ 
+// Recursive function to find the number of games since a multiplier
+function findM(m, hash) {
+  return new Promise((resolve, reject) => {
+    gameResultFromHash(hash).then((result) => {
+      if(result >= t) {
+        resolve(m);
+      } else {
+        SHA256(hash).then((newHash) => {
+          findM(m + 1, newHash).then((m) => {
+            resolve(m);
+          });
+        });
+      }
+    });
+  });
+}
+ 
+// Place a bet with the specified options
+function placeBet() {
+  log('Placing bet');
+  checkBalance();
+  engine.bet(wager, t);
+}
+ 
+// Pre-check before betting
+function checkBalance() {
+  if(userInfo.balance < config.wager.value) {
+    stop('Insufficient balance');
+  }
+}
+ 
+// Happens after the initial "sync", and after every game ending
+function checkParams(initial) {
+  if(engine.history.first().bust >= t && !initial) {
+    log(`Multiplier for finished game was >= ${t}x, resetting count. `);
+    m = 0;
+    log(`${n-m} round(s) of multipliers < ${t}x before betting remaining`);
+  } else {
+    if(!initial) m++;
+    if(m >= n) {
+      placeBet();
+      m = 0;
+    } else {
+      log(`${n-m} round(s) of multipliers < ${t}x before betting remaining`);
+    }
+  }
+}
+ 
+findM(0, engine.history.first().hash).then((value) => {
+  // m is global here
+  m = value;
+  log(`${m} game(s) since multiplier of or at least ${t}x`);
+  checkParams(true);
+  // Set up event listeners to continue the script after the initial stage
+  engine.on('GAME_ENDED', () => {
+    checkParams();
+  });
+});
